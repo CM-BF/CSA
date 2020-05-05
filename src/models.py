@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from transformers import BertModel
+from utils import model_name
+
 
 class CSA(nn.Module):
 
@@ -24,10 +27,9 @@ class CSA(nn.Module):
 
         self.fc = nn.Linear(len(filter_sizes) * n_filters, n_class)
 
-
-    def forward(self, text, **kwargs):
+    def forward(self, text, text_length, **kwargs):
         conved = [self.relu(conv(self.embedding(text).unsqueeze(1))).squeeze(3) for conv in self.convs]
-        pooled = [F.max_pool1d(conv, conv.shape[2]).squeeze(2) for conv in conved] # 一定要用pooling？
+        pooled = [F.max_pool1d(conv, conv.shape[2]).squeeze(2) for conv in conved]  # 一定要用pooling？
         cat = torch.cat(pooled, dim=1)
         pred = self.fc(cat)
 
@@ -44,19 +46,38 @@ class LSTM(nn.Module):
 
         hidden_dim = 256
         output_dim = 2
-        self.rnn = nn.RNN(args.embed_dim, hidden_dim)
+        n_layers = 2
+        dropout = 0.5
+        self.rnn = nn.LSTM(args.embed_dim, hidden_dim,
+                           n_layers, bidirectional=True, dropout=dropout)
+        self.fc = nn.Linear(hidden_dim * 2, output_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, text, text_lengths):
+        embedded = self.embedding(text).transpose(0, 1)
+        packed_input = nn.utils.rnn.pack_padded_sequence(embedded, text_lengths)
+        packed_output, (hidden, cell) = self.rnn(packed_input)
+        output, output_length = nn.utils.rnn.pad_packed_sequence(packed_output)
+
+        hidden = self.dropout(torch.cat((hidden[-2, :, :], hidden[-1, :, :]), dim=1))
+
+        return self.fc(hidden)
+
+
+class BERT(nn.Module):
+
+    def __init__(self):
+        super(BERT, self).__init__()
+
+        hidden_dim = 768
+        output_dim = 2
+        self.model = BertModel.from_pretrained(model_name)
         self.fc = nn.Linear(hidden_dim, output_dim)
 
-    def forward(self, text):
-        embedded = self.embedding(text.transpose(0, 1))
-        output, hidden = self.rnn(embedded)
-
-        assert torch.equal(output[-1, :, :], hidden.squeeze(0))
-
-        return self.fc(hidden.squeeze(0))
-
-
-
+    def forward(self, text, text_lengths):
+        hidden, _ = self.model(text)
+        pred = self.fc(hidden[:, 0])
+        return pred
 
 
 class LossFunction(nn.Module):
@@ -71,6 +92,10 @@ class LossFunction(nn.Module):
         target = self.target & 0
         target[label] = 1
         loss = self.loss_function(pred, label)
-        correct = (torch.argmax(pred, dim=1) == label).float().sum()
+        pred_label = torch.argmax(pred, dim=1)
+        tp = (pred_label & label).float().sum()
+        tn = ((pred_label ^ 1) & (label ^ 1)).float().sum()
+        fp = (pred_label & (label ^ 1)).float().sum()
+        fn = ((pred_label ^ 1) & label).float().sum()
 
-        return loss, correct
+        return loss, {'tp': tp.item(), 'tn': tn.item(), 'fp': fp.item(), 'fn': fn.item()}

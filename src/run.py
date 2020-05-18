@@ -8,10 +8,18 @@ import models
 from utils import tokenizer, set_min_len, tokenizer_len, tokenizer_bert, model_name
 import random
 import os
+import numpy as np
 from transformers import BertTokenizer
 
 
-random.seed(123)
+def setup_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+
+setup_seed(123)
 
 parser = argparse.ArgumentParser(description='Sentimental Analysis Classification.')
 parser.add_argument('--model', type=str, default='CSA', help='Choose the model.')
@@ -21,12 +29,12 @@ parser.add_argument('--interpret', action='store_true', help='Flag: for model in
 parser.add_argument('--epoch', type=int, default=100, help='Epochs to run.\n Default: 10')
 parser.add_argument('--init_lr', type=float, default=1e-2, help='Init learning rate.\n Default: 1e-3')
 parser.add_argument('--checkpoint_dir', type=str, default='../checkpoints', help='Path: Save model checkpoint.')
-parser.add_argument('--checkpoint', type=str, default=None, help='Path: Load model checkpoint.')
+parser.add_argument('--checkpoint', type=str, default='../checkpoints', help='Path: Load model checkpoint.')
 parser.add_argument('--dataset_dir', type=str, default='/home/citrine/datasets/SA/', help='Path of datasets.')
 parser.add_argument('--dataset_name', type=str, required=True, help='Name of the dataset.')
+parser.add_argument('--min_len', type=int, default=5, help='The minimal length of the sequence. Decided by the biggest CNN filters.')
 args = parser.parse_args()
 args.start = 0
-args.min_len = 5
 set_min_len(args.min_len)
 if torch.cuda.is_available():
     args.cuda = True
@@ -39,6 +47,9 @@ args.checkpoint_dir = os.path.join(args.checkpoint_dir, args.model, args.dataset
 print('checkpoint_dir:', args.checkpoint_dir)
 if not os.path.isdir(args.checkpoint_dir):
     os.system('mkdir -p %s' % args.checkpoint_dir)
+
+if args.checkpoint == '../checkpoints':
+    args.checkpoint = os.path.join(args.checkpoint, args.model, args.dataset_name, 'CSA_best.ckpt')
 
 # args.seq_length = 300
 # bert: add use_vocab=False
@@ -78,12 +89,18 @@ train_iter, val_iter, test_iter = data.BucketIterator.splits(
     sort_within_batch=True, device=args.device)
 
 
-if args.model == 'CSA':
-    model = models.CSA(args)
-elif args.model == 'LSTM':
-    model = models.LSTM(args)
-elif 'BERT' in args.model:
+# if args.model == 'CNN':
+#     model = models.CNN(args)
+# elif args.model == 'LSTM':
+#     model = models.LSTM(args)
+# elif args.model == 'TCNN':
+#     model = models.TCNN(args)
+# elif args.model == 'TCNN_n':
+#     model = models.TCNN_n(args)
+if 'BERT' in args.model:
     model = models.BERT()
+else:
+    exec('model = models.%s(args)' % args.model)
 loss_function = models.LossFunction(args)
 if args.cuda:
     model = model.cuda()
@@ -97,6 +114,8 @@ if args.test or args.interpret:
 
 if args.interpret:
     model.eval()  # for calling backward
+    if args.model == 'LSTM':
+        model.train()
     while 1:
         print('please input:', end='')
         text = input()

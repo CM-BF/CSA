@@ -2,6 +2,7 @@ import torch
 from tqdm import tqdm
 import os
 from captum.attr import LayerIntegratedGradients, TokenReferenceBase, visualization
+import time
 
 
 def train(train_iter, val_iter, model, loss_function, args):
@@ -40,18 +41,19 @@ def train(train_iter, val_iter, model, loss_function, args):
         f1 = 2 * precision * recall / (precision + recall)
         print('Epoch %d: train loss, acc and f1:' % epoch, avgloss, acc, f1)
 
+        ckpt = {
+            'state_dict': model.state_dict()
+        }
         if epoch % 1 == 0:
-            ckpt = {
-                'state_dict': model.state_dict()
-            }
-
             torch.save(ckpt, os.path.join(args.checkpoint_dir, "CSA_%s.ckpt" % str(epoch)))
+
         # scheduler.step(acc)
         val_loss = val(val_iter, model, loss_function, args)
-        if pre_val_loss - val_loss < 0.001:
+        if pre_val_loss - val_loss < 0.0001:
             end_signal += 1
             if end_signal >= 3:
                 print('Overfit warning, end.')
+                torch.save(ckpt, os.path.join(args.checkpoint_dir, "CSA_best.ckpt"))
                 break
         else:
             end_signal = 0
@@ -94,7 +96,7 @@ def test(test_iter, model, loss_function, args):
     model.eval()
     loss_function.eval()
 
-    os.system('rm test.out')
+    os.system('rm ../checkpoints/%s/%s/test.out' % (args.model, args.dataset_name))
 
     with torch.no_grad():
 
@@ -106,7 +108,7 @@ def test(test_iter, model, loss_function, args):
 
             loss, score = loss_function(model(batch_text, text_lengths), batch_label)
 
-            if args.test_ip:
+            if args.test_ip and (score['fp'] == 1 or score['fn'] == 1):
                 with torch.enable_grad():
                     model.train()  # for calling backward
                     interpret_sentence(model, batch_text, text_lengths, args, batch_label)
@@ -140,7 +142,9 @@ def interpret_sentence(model, text, text_lengths, args, label=0):
     model.zero_grad()
 
     # predict
+    start = time.time()
     pred = model(text, text_lengths).squeeze(0)
+    print("time:", time.time() - start)
     pred_ind = torch.argmax(pred).item()
 
     # generate reference indices for each sample
@@ -175,7 +179,7 @@ def add_attributions_to_visualizer(attributions, text, pred, pred_ind, label, ar
               text_attr)
     else:
         if pred_ind != label.item():
-            with open('test.out', 'a') as f:
+            with open('../checkpoints/%s/%s/test.out' % (args.model, args.dataset_name), 'a') as f:
                 f.write('Pred: (%.2f, %.2f) result_label: %d %d attr_sum: %.2f' % (
                 pred[0].item(), pred[1].item(), pred_ind, label.item(), attributions.sum()) + text_attr + '\n')
         print('Pred: (', '%.2f, %.2f' % (pred[0].item(), pred[1].item()), ')', 'result_label: ', pred_ind, label.item(),

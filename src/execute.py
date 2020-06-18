@@ -49,7 +49,7 @@ def train(train_iter, val_iter, model, loss_function, args):
 
         # scheduler.step(acc)
         val_loss = val(val_iter, model, loss_function, args)
-        if pre_val_loss - val_loss < 0.0001:
+        if pre_val_loss - val_loss < 0: #0.0001:
             end_signal += 1
             if end_signal >= 3:
                 print('Overfit warning, end.')

@@ -188,6 +188,56 @@ class TCNN_p(nn.Module):
         return pred
 
 
+class TCNN_p_token(nn.Module):
+
+    def __init__(self, args):
+        super(TCNN_p_token, self).__init__()
+
+        self.embedding = nn.Embedding(args.embed_num, args.embed_dim)
+        self.embedding.weight = nn.Parameter(args.embed, requires_grad=True)
+
+        n_class = 2
+        filter_sizes = [3, 3, 3, 3]
+        self.blocks = nn.Sequential(*[TCNN_p_token_block(args, filter_size)
+                                     for filter_size in filter_sizes])
+
+        self.relu = nn.LeakyReLU(negative_slope=0.1)
+        self.dropout = nn.Dropout(0.5)
+        self.fc = nn.Linear(args.embed_dim, n_class)
+
+    def forward(self, text, text_length, **kwargs):
+        embed_text = self.embedding(text) # [N, S, D]
+        weighted_conved = self.dropout(self.blocks(embed_text)).permute(0, 2, 1)
+        pooled = F.max_pool1d(weighted_conved, weighted_conved.shape[2]).squeeze(2) # 一定要用pooling？一定的，原因是最大值的大小代表一种模式的存在与否
+        pred = self.fc(pooled)
+
+        return pred
+
+
+class TCNN_p_token_block(nn.Module):
+
+    def __init__(self, args, fs):
+        super(TCNN_p_token_block, self).__init__()
+
+        n_filters = args.embed_dim
+
+        self.transformer = nn.TransformerEncoderLayer(d_model=args.embed_dim, nhead=10)
+        self.conv = nn.Conv2d(in_channels=1,
+                      out_channels=n_filters,
+                      padding=((fs - 1)//2, 0),
+                      kernel_size=(fs, args.embed_dim))
+
+        self.relu = nn.LeakyReLU(negative_slope=0.1)
+
+    def forward(self, embed_text, **kwargs):
+        weighted_map = self.relu(self.transformer(embed_text))
+
+        conved = self.relu(self.conv(embed_text.unsqueeze(1))).squeeze(3).permute(0, 2, 1)
+        weighted_conved = weighted_map * conved
+
+        return weighted_conved
+
+
 class TCNN_l(nn.Module):
 
     def __init__(self, args):

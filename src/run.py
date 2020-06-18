@@ -5,7 +5,7 @@ import torchtext.data as data
 from torchtext import vocab
 import execute
 import models
-from utils import tokenizer, set_min_len, tokenizer_len, tokenizer_bert, model_name
+from utils import tokenizer, set_min_len, tokenizer_len, tokenizer_bert, model_name, tokenizer_token, tokenizer_token_len
 import random
 import os
 import numpy as np
@@ -33,6 +33,7 @@ parser.add_argument('--checkpoint', type=str, default='../checkpoints', help='Pa
 parser.add_argument('--dataset_dir', type=str, default='/home/citrine/datasets/SA/', help='Path of datasets.')
 parser.add_argument('--dataset_name', type=str, required=True, help='Name of the dataset.')
 parser.add_argument('--min_len', type=int, default=5, help='The minimal length of the sequence. Decided by the biggest CNN filters.')
+parser.add_argument('--token_vec', action='store_true', help='Flag to use token vectors.')
 args = parser.parse_args()
 args.start = 0
 set_min_len(args.min_len)
@@ -60,6 +61,8 @@ if args.model == 'BERT':
                       unk_token=args.bert_tokenizer.unk_token_id)
 else:
     TEXT = data.Field(sequential=True, tokenize=tokenizer, include_lengths=True)  # , fix_length=args.seq_length)
+    if args.token_vec:
+        TEXT = data.Field(sequential=True, tokenize=tokenizer_token, include_lengths=True)
 LABEL = data.Field(sequential=False, use_vocab=False)
 
 # train, val, test = data.TabularDataset.splits(path='/home/citrine/datasets/SA/',
@@ -75,7 +78,10 @@ train, val = train_val.split(7.0 / 8.0)
 
 
 if 'BERT' not in args.model:
-    wordvec = vocab.Vectors(name='Tencent_AILab_ChineseEmbedding.txt', cache='/home/citrine/datasets/wordvec/')
+    if args.token_vec:
+        wordvec = vocab.Vectors(name='token_vec_300.bin', cache='/home/citrine/datasets/wordvec/')
+    else:
+        wordvec = vocab.Vectors(name='Tencent_AILab_ChineseEmbedding.txt', cache='/home/citrine/datasets/wordvec/')
     TEXT.build_vocab(train, val, test, vectors=wordvec)
     args.TEXT = TEXT
     args.embed = TEXT.vocab.vectors
@@ -125,7 +131,10 @@ if args.interpret:
             text = torch.tensor([args.bert_tokenizer.encode_custom(text)], device=args.device)
             text_lengths = len(text)
         else:
-            text, text_lengths = tokenizer_len(text)
+            if args.token_vec:
+                text, text_lengths = tokenizer_token_len(text)
+            else:
+                text, text_lengths = tokenizer_len(text)
             text = [args.TEXT.vocab.stoi[t] for t in text]
             text = torch.tensor(text, device=args.device).unsqueeze(0)
         text_lengths = torch.tensor([text_lengths], device=args.device)
